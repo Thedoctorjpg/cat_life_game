@@ -34,7 +34,8 @@ local poopSound = snd.sampleplayer.new("sounds/pooping")
 
 -- Simple logger for automated sanity tests
 local function logEvent(msg)
-    local ok, f = pcall(function() return io.open("/tmp/cat_life_game.log", "a") end)
+    local LOG_PATH = "/Users/admin/Documents/cat_life_game/cat_life_test.log"
+    local ok, f = pcall(function() return io.open(LOG_PATH, "a") end)
     if ok and f then
         f:write(os.date("%Y-%m-%d %H:%M:%S") .. " - " .. msg .. "\n")
         f:close()
