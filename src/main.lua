@@ -39,9 +39,11 @@ local function logEvent(msg)
     if ok and f then
         f:write(os.date("%Y-%m-%d %H:%M:%S") .. " - " .. msg .. "\n")
         f:close()
+        lastLog = msg
     else
         -- fallback to print if file access fails
         print("LOG: " .. tostring(msg))
+        lastLog = msg
     end
 end
 
@@ -118,6 +120,8 @@ foodBowlSprite:add()
 -- ---------------------------------------------------------
 -- UI DRAWING
 -- ---------------------------------------------------------
+local lastLog = nil
+
 local function drawUI()
     gfx.drawText("HUNGER:", 10, 10)
     gfx.drawRect(80, 12, 100, 12)
@@ -127,6 +131,11 @@ local function drawUI()
     gfx.drawText("FISH: " .. fishInventory, 300, 10)
     gfx.drawText("BIRDS: " .. birdInventory, 300, 30)
     gfx.drawText("DAY: " .. survivalDays, 10, 210)
+
+    -- Show latest log (useful for automated tests)
+    if lastLog then
+        gfx.drawText("LOG: " .. lastLog, 10, 230)
+    end
 end
 
 -- ---------------------------------------------------------
