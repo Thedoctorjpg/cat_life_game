@@ -95,7 +95,7 @@ local function startSurpriseTimer()
 end
 
 local function updateDayNight()
-    currentTime += 1
+    currentTime = currentTime + 1
     if currentTime > dayDuration then currentTime = 0 end
     local progress = currentTime / dayDuration
     lightLevel = (math.sin(progress * math.pi * 2) + 1) / 2
@@ -127,15 +127,15 @@ function updateInteractions(isSprinting)
     end
 
     if isSprinting then
-        hunger -= (baseDrain * 3)
+        hunger = hunger - (baseDrain * 3)
     else
-        hunger -= baseDrain
+        hunger = hunger - baseDrain
     end
 
     -- Collisions
     if catSprite:collidesWith(fishSprite) then
         splashSound:play()
-        fishInventory += 1
+        fishInventory = fishInventory + 1
         fishSprite:moveTo(math.random(32,368), math.random(32,208))
     end
 
