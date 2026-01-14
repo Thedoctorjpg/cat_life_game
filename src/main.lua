@@ -77,13 +77,13 @@ function updateInteractions()
     -- 1. Hunting for Ingredients
     if catSprite:collidesWith(fishSprite) then
         splashSound:play()
-        fishInventory += 1
+        fishInventory = fishInventory + 1
         fishSprite:moveTo(math.random(20, 380), math.random(40, 180))
     end
 
     if catSprite:collidesWith(birdSprite) then
         crowSound:play()
-        birdInventory += 1
+        birdInventory = birdInventory + 1
         birdSprite:moveTo(math.random(20, 380), math.random(20, 100))
     end
 
@@ -122,7 +122,7 @@ function pd.update()
         if pd.buttonIsPressed(pd.kButtonLeft) then catSprite:moveBy(-3, 0) end
         if pd.buttonIsPressed(pd.kButtonRight) then catSprite:moveBy(3, 0) end
         
-        hunger -= 0.06
+        hunger = hunger - 0.06
         if hunger <= 0 then isGameOver = true end
         
         updateInteractions()
