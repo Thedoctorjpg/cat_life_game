@@ -1,229 +1,160 @@
 import "CoreLibs/graphics"
 import "CoreLibs/sprites"
 import "CoreLibs/timer"
+import "CoreLibs/animation"
+import "CoreLibs/crank"
 
 local pd <const> = playdate
 local gfx <const> = pd.graphics
 local snd <const> = pd.sound
 
 -- ---------------------------------------------------------
--- GAME STATE & INVENTORY
+-- GAME STATE & TIME CYCLES
 -- ---------------------------------------------------------
 local hunger = 100.0
-local isGameOver = false
-
--- Inventory for "Nude Food" ingredients
 local fishInventory = 0
 local birdInventory = 0
-local survivalDays = 0
-local dayTimer = 0
+local isGameOver = false
+
+-- Movement Constants
+local normalSpeed = 3
+local sprintSpeed = 6
+
+-- Day/Night & Crank Logic
+local dayDuration = 2000 
+local currentTime = 0
+local isNight = false
+local lightLevel = 1.0 
+local isPurring = false
+
+-- Surprise Event Variables
+local surpriseActive = false
 
 -- ---------------------------------------------------------
 -- ASSET LOADING
 -- ---------------------------------------------------------
-local catImage = gfx.image.new("images/cat")
+local catTable = gfx.imagetable.new("images/cat-table-32-32")
+local catAnimation = gfx.animation.loop.new(100, catTable, true)
+
 local fishImage = gfx.image.new("images/fish")
 local birdImage = gfx.image.new("images/bird")
-local foodImage = gfx.image.new("images/cat_food")
+local bowlImage = gfx.image.new("images/cat_food")
 local poopImage = gfx.image.new("images/poop")
+local bedImage = gfx.image.new("images/bed")
+local surpriseImage = gfx.image.new("images/surprise")
 
 local splashSound = snd.sampleplayer.new("sounds/splash")
-local crowSound = snd.sampleplayer.new("sounds/crow-call")
-local shakeBagSound = snd.sampleplayer.new("sounds/shake-bag")
+local shakeSound = snd.sampleplayer.new("sounds/shake-bag")
 local poopSound = snd.sampleplayer.new("sounds/pooping")
-
--- Simple logger for automated sanity tests
-local function logEvent(msg)
-    local LOG_PATH = "/Users/admin/Documents/cat_life_game/cat_life_test.log"
-    local ok, f = pcall(function() return io.open(LOG_PATH, "a") end)
-    if ok and f then
-        f:write(os.date("%Y-%m-%d %H:%M:%S") .. " - " .. msg .. "\n")
-        f:close()
-        lastLog = msg
-    else
-        -- fallback to print if file access fails
-        print("LOG: " .. tostring(msg))
-        lastLog = msg
-    end
-end
-
--- Lightweight file appender for debug logs (local path: debug.log)
-local function appendLog(msg)
-    local ok, f = pcall(function() return io.open("debug.log", "a") end)
-    if ok and f then
-        f:write(os.date("%Y-%m-%d %H:%M:%S") .. " - " .. tostring(msg) .. "\n")
-        f:close()
-    else
-        print("appendLog failed: " .. tostring(msg))
-    end
-end
-
--- On-screen debug overlay and logging helpers
-local debugMode = false
-local debugLines = {}
-local debugTogglePressed = false -- used to detect A+B press edge
-local debugCrashPressed = false -- used to detect A+B+Down test crash edge
-
-local function debugLog(...)
-    local parts = { ... }
-    for i = 1, #parts do parts[i] = tostring(parts[i]) end
-    local s = table.concat(parts, " ")
-    print("DEBUG: " .. s)
-    appendLog(s)
-    table.insert(debugLines, 1, s)
-    if #debugLines > 10 then table.remove(debugLines, #debugLines) end
-end
-
-local function drawDebugOverlay()
-    if not debugMode then return end
-    -- background panel
-    gfx.setColor(gfx.kColorBlack)
-    gfx.fillRect(4, 4, 312, 110)
-    gfx.setColor(gfx.kColorWhite)
-    gfx.drawText("DEBUG (press A+B to toggle)", 8, 8)
-    local y = 22
-    for i = 1, math.min(#debugLines, 8) do
-        gfx.drawText(debugLines[i], 8, y)
-        y = y + 12
-    end
-end
-
--- Example: use debugLog("player", x, y) to log values both on-screen and to debug.log
-
-
--- Automated sanity test (runs once if enabled)
-local AUTO_TEST = true
-local testState = 0
-local testTimer = 0
-local testCompleted = false
-
-local function runAutoTest()
-    if not AUTO_TEST or testCompleted then return end
-    testTimer = testTimer + 1
-
-    if testState == 0 and testTimer > 10 then
-        local fx, fy = fishSprite:getPosition()
-        catSprite:moveTo(fx, fy)
-        logEvent("AutoTest: moved cat to fish")
-        testState = 1
-        testTimer = 0
-    elseif testState == 1 then
-        if catSprite:collidesWith(fishSprite) then
-            updateInteractions()
-            if fishInventory > 0 then
-                logEvent("AutoTest: fish pickup PASS (fishInventory=" .. fishInventory .. ")")
-            else
-                logEvent("AutoTest: fish pickup FAIL")
-            end
-            testState = 2
-            testTimer = 0
-        end
-    elseif testState == 2 and testTimer > 10 then
-        local bx, by = foodBowlSprite:getPosition()
-        catSprite:moveTo(bx, by)
-        logEvent("AutoTest: moved cat to bowl")
-        testState = 3
-        testTimer = 0
-    elseif testState == 3 then
-        if catSprite:collidesWith(foodBowlSprite) then
-            updateInteractions()
-            if fishInventory == 0 and birdInventory == 0 then
-                logEvent("AutoTest: eat/reset PASS (inventory reset)")
-            else
-                logEvent("AutoTest: eat/reset FAIL (fish=" .. fishInventory .. ", bird=" .. birdInventory .. ")")
-            end
-            testCompleted = true
-            logEvent("AutoTest: completed. hunger=" .. hunger)
-            AUTO_TEST = false
-        end
-    end
-end
+local bellSound = snd.sampleplayer.new("sounds/doorbell-rings")
 
 -- ---------------------------------------------------------
 -- SPRITE SETUP
 -- ---------------------------------------------------------
-local catSprite = gfx.sprite.new(catImage)
+local function createStdSprite(img, x, y)
+    local s = gfx.sprite.new(img)
+    s:moveTo(x, y)
+    s:setCollideRect(0, 0, 32, 32)
+    s:add()
+    return s
+end
+
+local catSprite = gfx.sprite.new()
 catSprite:moveTo(200, 120)
-catSprite:setCollideRect(0, 0, catSprite:getSize())
+catSprite:setCollideRect(0, 0, 32, 32)
 catSprite:add()
 
-local fishSprite = gfx.sprite.new(fishImage)
-fishSprite:moveTo(100, 100)
-fishSprite:add()
-
-local birdSprite = gfx.sprite.new(birdImage)
-birdSprite:moveTo(300, 50)
-birdSprite:add()
-
--- The "Processing Station" (Nadia Lim's Development Kitchen style)
-local foodBowlSprite = gfx.sprite.new(foodImage)
-foodBowlSprite:moveTo(200, 200)
-foodBowlSprite:setCollideRect(0, 0, foodBowlSprite:getSize())
-foodBowlSprite:add()
+local fishSprite = createStdSprite(fishImage, 100, 100)
+local birdSprite = createStdSprite(birdImage, 300, 50)
+local bowlSprite = createStdSprite(bowlImage, 200, 200)
+local bedSprite = createStdSprite(bedImage, 50, 50)
+local surpriseSprite = gfx.sprite.new(surpriseImage)
+surpriseSprite:setCollideRect(0, 0, 32, 32)
 
 -- ---------------------------------------------------------
--- UI DRAWING
+-- LOGIC FUNCTIONS
 -- ---------------------------------------------------------
-local lastLog = nil
 
-local function drawUI()
-    gfx.drawText("HUNGER:", 10, 10)
-    gfx.drawRect(80, 12, 100, 12)
-    if hunger > 0 then gfx.fillRect(82, 14, (hunger * 0.96), 8) end
-    
-    -- Display Inventory
-    gfx.drawText("FISH: " .. fishInventory, 300, 10)
-    gfx.drawText("BIRDS: " .. birdInventory, 300, 30)
-    gfx.drawText("DAY: " .. survivalDays, 10, 210)
-
-    -- Show latest log (useful for automated tests)
-    if lastLog then
-        gfx.drawText("LOG: " .. lastLog, 10, 230)
+local function triggerSurprise()
+    if not surpriseActive and not isGameOver then
+        bellSound:play()
+        surpriseActive = true
+        surpriseSprite:moveTo(math.random(40, 360), math.random(40, 200))
+        surpriseSprite:add()
+        pd.timer.performAfterDelay(10000, function()
+            if surpriseActive then surpriseSprite:remove(); surpriseActive = false end
+        end)
     end
 end
 
--- ---------------------------------------------------------
--- PRODUCTION LOGIC
--- ---------------------------------------------------------
-function updateInteractions()
+local function startSurpriseTimer()
+    pd.timer.performAfterDelay(math.random(45000, 60000), function()
+        triggerSurprise()
+        startSurpriseTimer()
+    end)
+end
+
+local function updateDayNight()
+    currentTime += 1
+    if currentTime > dayDuration then currentTime = 0 end
+    local progress = currentTime / dayDuration
+    lightLevel = (math.sin(progress * math.pi * 2) + 1) / 2
+    isNight = lightLevel < 0.4
+end
+
+local function drawOverlay()
+    if lightLevel < 0.8 then
+        gfx.setDitherPattern(1 - lightLevel, gfx.image.kDitherTypeBayer8x8)
+        gfx.fillRect(0, 0, 400, 240)
+    end
+end
+
+function updateInteractions(isSprinting)
     if isGameOver then return end
 
-    -- 1. Hunting for Ingredients
+    -- Check for Crank Purr Mechanic
+    local change = pd.getCrankChange()
+    isPurring = (math.abs(change) > 2) and catSprite:collidesWith(bedSprite)
+
+    -- Determine Hunger Drain Rate
+    local baseDrain = 0.05
+    if isNight then
+        if catSprite:collidesWith(bedSprite) then
+            baseDrain = isPurring and 0.005 or 0.02 -- Purring makes rest even better!
+        else
+            baseDrain = 0.1 -- Night wandering is hard work
+        end
+    end
+
+    if isSprinting then
+        hunger -= (baseDrain * 3)
+    else
+        hunger -= baseDrain
+    end
+
+    -- Collisions
     if catSprite:collidesWith(fishSprite) then
         splashSound:play()
-        fishInventory = fishInventory + 1
-        logEvent("Picked up fish; fishInventory=" .. fishInventory)
-        fishSprite:moveTo(math.random(20, 380), math.random(40, 180))
+        fishInventory += 1
+        fishSprite:moveTo(math.random(32,368), math.random(32,208))
     end
 
-    if catSprite:collidesWith(birdSprite) then
-        crowSound:play()
-        birdInventory = birdInventory + 1
-        logEvent("Picked up bird; birdInventory=" .. birdInventory)
-        birdSprite:moveTo(math.random(20, 380), math.random(20, 100))
+    if surpriseActive and catSprite:collidesWith(surpriseSprite) then
+        shakeSound:play()
+        hunger = math.min(hunger + 50, 100)
+        surpriseSprite:remove()
+        surpriseActive = false
     end
 
-    -- 2. Making and Eating Food at the Bowl
-    if catSprite:collidesWith(foodBowlSprite) then
+    if catSprite:collidesWith(bowlSprite) then
         if fishInventory > 0 or birdInventory > 0 then
-            -- Processing fresh ingredients into a balanced meal
-            shakeBagSound:play()
-            
-            local mealValue = (fishInventory * 20) + (birdInventory * 35)
-            hunger = math.min(hunger + mealValue, 100)
-            logEvent("Ate meal: mealValue=" .. mealValue .. ", hunger=" .. hunger)
-            
-            -- Reset inventory after "cooking"
+            shakeSound:play()
+            hunger = math.min(hunger + (fishInventory * 25), 100)
             fishInventory = 0
-            birdInventory = 0
-            
-            -- Trigger digestion (poop) after a healthy meal
-            pd.timer.performAfterDelay(4000, function()
+            pd.timer.performAfterDelay(5000, function()
                 poopSound:play()
-                local px, py = catSprite:getPosition()
-                logEvent("Pooped at: " .. px .. "," .. py)
                 local p = gfx.sprite.new(poopImage)
-                p:moveTo(px, py)
+                p:moveTo(catSprite:getPosition())
                 p:add()
             end)
         end
@@ -231,64 +162,47 @@ function updateInteractions()
 end
 
 -- ---------------------------------------------------------
--- MAIN LOOP (wrapped for uncaught error logging)
+-- INITIALIZE & MAIN LOOP
 -- ---------------------------------------------------------
-local function mainUpdate()
-    if not isGameOver then
-        if pd.buttonIsPressed(pd.kButtonUp) then catSprite:moveBy(0, -3) end
-        if pd.buttonIsPressed(pd.kButtonDown) then catSprite:moveBy(0, 3) end
-        if pd.buttonIsPressed(pd.kButtonLeft) then catSprite:moveBy(-3, 0) end
-        if pd.buttonIsPressed(pd.kButtonRight) then catSprite:moveBy(3, 0) end
-        
-        runAutoTest()
-        
-        hunger = hunger - 0.06
-        if hunger <= 0 then isGameOver = true end
-        
-        updateInteractions()
-    end
+startSurpriseTimer()
+
+function pd.update()
+    local isMoving = false
+    local isSprinting = pd.buttonIsPressed(pd.kButtonB)
+    local currentMoveSpeed = isSprinting and sprintSpeed or normalSpeed
     
+    if not isGameOver then
+        if pd.buttonIsPressed(pd.kButtonUp) then catSprite:moveBy(0, -currentMoveSpeed); isMoving = true end
+        if pd.buttonIsPressed(pd.kButtonDown) then catSprite:moveBy(0, currentMoveSpeed); isMoving = true end
+        if pd.buttonIsPressed(pd.kButtonLeft) then 
+            catSprite:moveBy(-currentMoveSpeed, 0); isMoving = true; catSprite:setImageFlip(gfx.kImageFlippedX) 
+        end
+        if pd.buttonIsPressed(pd.kButtonRight) then 
+            catSprite:moveBy(currentMoveSpeed, 0); isMoving = true; catSprite:setImageFlip(gfx.kImageUnflipped) 
+        end
+
+        if isMoving then
+            catAnimation.delay = isSprinting and 50 or 100
+            catSprite:setImage(catAnimation:image())
+        else
+            catSprite:setImage(catTable:getImage(1))
+        end
+
+        updateDayNight()
+        updateInteractions(isSprinting and isMoving)
+    end
+
+    if hunger <= 0 then isGameOver = true end
+
     gfx.sprite.update()
     pd.timer.updateTimers()
-
-    -- Debug overlay toggle: press A+B together to toggle (edge-detected)
-    local aDown = pd.buttonIsPressed(pd.kButtonA)
-    local bDown = pd.buttonIsPressed(pd.kButtonB)
-    if aDown and bDown then
-        if not debugTogglePressed then
-            debugMode = not debugMode
-            debugTogglePressed = true
-            logEvent("Debug overlay " .. (debugMode and "ENABLED" or "DISABLED"))
-        end
-    else
-        debugTogglePressed = false
-    end
-
-    -- Intentional test crash: press A+B+Down together to trigger an error (edge-detected)
-    local down = pd.buttonIsPressed(pd.kButtonDown)
-    if aDown and bDown and down then
-        if not debugCrashPressed then
-            debugCrashPressed = true
-            error("Intentional test error (triggered by A+B+Down)")
-        end
-    else
-        debugCrashPressed = false
-    end
-
-    drawUI()
-    drawDebugOverlay()
-end
-
--- Wrap the main update with xpcall so uncaught errors produce a full traceback in debug.log
-function pd.update()
-    local ok, err = xpcall(mainUpdate, debug.traceback)
-    if not ok then
-        local msg = "UNCAUGHT ERROR: " .. tostring(err)
-        -- Best-effort logging; avoid throwing inside error handler
-        pcall(function()
-            appendLog(msg)
-            logEvent(msg)
-        end)
-        print(msg)
+    drawOverlay()
+    
+    -- UI
+    gfx.drawText("Hunger: " .. math.floor(hunger), 10, 10)
+    if isPurring then 
+        gfx.drawText("PURRING... RESTORING", 120, 210) 
+    elseif isSprinting and isMoving then 
+        gfx.drawText("SPRINTING!", 140, 210) 
     end
 end
