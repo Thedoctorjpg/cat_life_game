@@ -1,0 +1,9 @@
+# Ignore compiled Playdate files
+*.pdx/
+*.pdx.zip
+
+# Ignore macOS system files
+.DS_Store
+
+# Ignore local SDK settings
+.vscode/

@@ -1,0 +1,6 @@
+name=Cat Life Game
+author=@dloganberry
+description=Cat Sim
+bundleID=com.dloganberry.cat_life_game
+version=1.0
+build=1
