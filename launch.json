@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // ... (other properties like "name", "type", "request")
+            "console": "integratedTerminal",
+            "program": "${usr/admin/documents}/cat_life_sim",
+            "args": [">", "debug.log", "2>&1"], // Redirect stdout and stderr to debug.log
+            // OR if 'args' doesn't work, use a custom launch command
+            // "MIMode": "gdb", // Example for C++
+            // "externalConsole": true, // Might force a separate window, but allows shell redirection easier
+        }
+    ]
+}

@@ -47,6 +47,50 @@ local function logEvent(msg)
     end
 end
 
+-- Lightweight file appender for debug logs (local path: debug.log)
+local function appendLog(msg)
+    local ok, f = pcall(function() return io.open("debug.log", "a") end)
+    if ok and f then
+        f:write(os.date("%Y-%m-%d %H:%M:%S") .. " - " .. tostring(msg) .. "\n")
+        f:close()
+    else
+        print("appendLog failed: " .. tostring(msg))
+    end
+end
+
+-- On-screen debug overlay and logging helpers
+local debugMode = false
+local debugLines = {}
+local debugTogglePressed = false -- used to detect A+B press edge
+local debugCrashPressed = false -- used to detect A+B+Down test crash edge
+
+local function debugLog(...)
+    local parts = { ... }
+    for i = 1, #parts do parts[i] = tostring(parts[i]) end
+    local s = table.concat(parts, " ")
+    print("DEBUG: " .. s)
+    appendLog(s)
+    table.insert(debugLines, 1, s)
+    if #debugLines > 10 then table.remove(debugLines, #debugLines) end
+end
+
+local function drawDebugOverlay()
+    if not debugMode then return end
+    -- background panel
+    gfx.setColor(gfx.kColorBlack)
+    gfx.fillRect(4, 4, 312, 110)
+    gfx.setColor(gfx.kColorWhite)
+    gfx.drawText("DEBUG (press A+B to toggle)", 8, 8)
+    local y = 22
+    for i = 1, math.min(#debugLines, 8) do
+        gfx.drawText(debugLines[i], 8, y)
+        y = y + 12
+    end
+end
+
+-- Example: use debugLog("player", x, y) to log values both on-screen and to debug.log
+
+
 -- Automated sanity test (runs once if enabled)
 local AUTO_TEST = true
 local testState = 0
@@ -187,9 +231,9 @@ function updateInteractions()
 end
 
 -- ---------------------------------------------------------
--- MAIN LOOP
+-- MAIN LOOP (wrapped for uncaught error logging)
 -- ---------------------------------------------------------
-function pd.update()
+local function mainUpdate()
     if not isGameOver then
         if pd.buttonIsPressed(pd.kButtonUp) then catSprite:moveBy(0, -3) end
         if pd.buttonIsPressed(pd.kButtonDown) then catSprite:moveBy(0, 3) end
@@ -206,5 +250,45 @@ function pd.update()
     
     gfx.sprite.update()
     pd.timer.updateTimers()
+
+    -- Debug overlay toggle: press A+B together to toggle (edge-detected)
+    local aDown = pd.buttonIsPressed(pd.kButtonA)
+    local bDown = pd.buttonIsPressed(pd.kButtonB)
+    if aDown and bDown then
+        if not debugTogglePressed then
+            debugMode = not debugMode
+            debugTogglePressed = true
+            logEvent("Debug overlay " .. (debugMode and "ENABLED" or "DISABLED"))
+        end
+    else
+        debugTogglePressed = false
+    end
+
+    -- Intentional test crash: press A+B+Down together to trigger an error (edge-detected)
+    local down = pd.buttonIsPressed(pd.kButtonDown)
+    if aDown and bDown and down then
+        if not debugCrashPressed then
+            debugCrashPressed = true
+            error("Intentional test error (triggered by A+B+Down)")
+        end
+    else
+        debugCrashPressed = false
+    end
+
     drawUI()
+    drawDebugOverlay()
+end
+
+-- Wrap the main update with xpcall so uncaught errors produce a full traceback in debug.log
+function pd.update()
+    local ok, err = xpcall(mainUpdate, debug.traceback)
+    if not ok then
+        local msg = "UNCAUGHT ERROR: " .. tostring(err)
+        -- Best-effort logging; avoid throwing inside error handler
+        pcall(function()
+            appendLog(msg)
+            logEvent(msg)
+        end)
+        print(msg)
+    end
 end
