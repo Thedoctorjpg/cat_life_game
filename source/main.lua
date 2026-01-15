@@ -1,208 +1,116 @@
 import "CoreLibs/graphics"
 import "CoreLibs/sprites"
-import "CoreLibs/timer"
-import "CoreLibs/animation"
-import "CoreLibs/crank"
 
-local pd <const> = playdate
-local gfx <const> = pd.graphics
-local snd <const> = pd.sound
+local pd = playdate
+local gfx = pd.graphics
+local sound = pd.sound
 
--- ---------------------------------------------------------
--- GAME STATE & TIME CYCLES
--- ---------------------------------------------------------
-local hunger = 100.0
-local fishInventory = 0
-local birdInventory = 0
-local isGameOver = false
+-- Background & FX sounds (looping / one-shot)
+local dayAmbience = sound.fileplayer.new("sounds/wind-birds")
+local nightAmbience = sound.fileplayer.new("sounds/crickets-night")
+local purrLoop = sound.fileplayer.new("sounds/purr-loop")
+local rainLoop = sound.fileplayer.new("sounds/rain-patter")
+local thunderSfx = sound.fileplayer.new("sounds/thunder")
+local doorbellSfx = sound.fileplayer.new("sounds/doorbell")
 
--- Movement Constants
-local normalSpeed = 3
-local sprintSpeed = 6
+-- Set volumes & loop where needed
+if dayAmbience then dayAmbience:setVolume(0.4); dayAmbience:play(0) end
+if nightAmbience then nightAmbience:setVolume(0.35); nightAmbience:stop() end
+if purrLoop then purrLoop:setVolume(0.6); purrLoop:stop() end
+if rainLoop then rainLoop:setVolume(0.45); rainLoop:stop() end
+if thunderSfx then thunderSfx:setVolume(0.7) end
+if doorbellSfx then doorbellSfx:setVolume(0.8) end
 
--- Day/Night & Crank Logic
-local dayDuration = 2000 
-local currentTime = 0
-local isNight = false
-local lightLevel = 1.0 
-local isPurring = false
+-- Game variables (example placeholders - replace with your actual ones)
+local hunger = 0
+local maxHunger = 100
+local isOnBed = false
+local dayNightCycle = 0  -- 0 = full day, 1 = full night (your cycle var)
+local isStorming = false
+local lastThunderTime = 0
+local stormChance = 0.02  -- % chance per frame to start storm
+local treatJustSpawned = false
 
--- Surprise Event Variables
-local surpriseActive = false
-
--- ---------------------------------------------------------
--- ASSET LOADING
--- ---------------------------------------------------------
-local catTable = gfx.imagetable.new("images/cat-table-32-32")
-local catAnimation = gfx.animation.loop.new(100, catTable, true)
-
-local fishImage = gfx.image.new("images/fish")
-local birdImage = gfx.image.new("images/bird")
-local bowlImage = gfx.image.new("images/cat_food")
-local poopImage = gfx.image.new("images/poop")
-local bedImage = gfx.image.new("images/bed")
-local surpriseImage = gfx.image.new("images/surprise")
-
-local splashSound = snd.sampleplayer.new("sounds/splash")
-local shakeSound = snd.sampleplayer.new("sounds/shake-bag")
-local poopSound = snd.sampleplayer.new("sounds/pooping")
-local bellSound = snd.sampleplayer.new("sounds/doorbell-rings")
-
--- ---------------------------------------------------------
--- SPRITE SETUP
--- ---------------------------------------------------------
-local function createStdSprite(img, x, y)
-    local s = gfx.sprite.new(img)
-    s:moveTo(x, y)
-    s:setCollideRect(0, 0, 32, 32)
-    s:add()
-    return s
-end
-
-local catSprite = gfx.sprite.new()
-catSprite:moveTo(200, 120)
-catSprite:setCollideRect(0, 0, 32, 32)
-catSprite:add()
-
-local fishSprite = createStdSprite(fishImage, 100, 100)
-local birdSprite = createStdSprite(birdImage, 300, 50)
-local bowlSprite = createStdSprite(bowlImage, 200, 200)
-local bedSprite = createStdSprite(bedImage, 50, 50)
-local surpriseSprite = gfx.sprite.new(surpriseImage)
-surpriseSprite:setCollideRect(0, 0, 32, 32)
-
--- ---------------------------------------------------------
--- LOGIC FUNCTIONS
--- ---------------------------------------------------------
-
-local function triggerSurprise()
-    if not surpriseActive and not isGameOver then
-        bellSound:play()
-        surpriseActive = true
-        surpriseSprite:moveTo(math.random(40, 360), math.random(40, 200))
-        surpriseSprite:add()
-        pd.timer.performAfterDelay(10000, function()
-            if surpriseActive then surpriseSprite:remove(); surpriseActive = false end
-        end)
-    end
-end
-
-local function startSurpriseTimer()
-    pd.timer.performAfterDelay(math.random(45000, 60000), function()
-        triggerSurprise()
-        startSurpriseTimer()
-    end)
-end
-
-local function updateDayNight()
-    currentTime = currentTime + 1
-    if currentTime > dayDuration then currentTime = 0 end
-    local progress = currentTime / dayDuration
-    lightLevel = (math.sin(progress * math.pi * 2) + 1) / 2
-    isNight = lightLevel < 0.4
-end
-
-local function drawOverlay()
-    if lightLevel < 0.8 then
-        gfx.setDitherPattern(1 - lightLevel, gfx.image.kDitherTypeBayer8x8)
-        gfx.fillRect(0, 0, 400, 240)
-    end
-end
-
-function updateInteractions(isSprinting)
-    if isGameOver then return end
-
-    -- Check for Crank Purr Mechanic
-    local change = pd.getCrankChange()
-    isPurring = (math.abs(change) > 2) and catSprite:collidesWith(bedSprite)
-
-    -- Determine Hunger Drain Rate
-    local baseDrain = 0.05
-    if isNight then
-        if catSprite:collidesWith(bedSprite) then
-            baseDrain = isPurring and 0.005 or 0.02 -- Purring makes rest even better!
-        else
-            baseDrain = 0.1 -- Night wandering is hard work
-        end
-    end
-
-    if isSprinting then
-        hunger = hunger - (baseDrain * 3)
-    else
-        hunger = hunger - baseDrain
-    end
-
-    -- Collisions
-    if catSprite:collidesWith(fishSprite) then
-        splashSound:play()
-        fishInventory = fishInventory + 1
-        fishSprite:moveTo(math.random(32,368), math.random(32,208))
-    end
-
-    if surpriseActive and catSprite:collidesWith(surpriseSprite) then
-        shakeSound:play()
-        hunger = math.min(hunger + 50, 100)
-        surpriseSprite:remove()
-        surpriseActive = false
-    end
-
-    if catSprite:collidesWith(bowlSprite) then
-        if fishInventory > 0 or birdInventory > 0 then
-            shakeSound:play()
-            hunger = math.min(hunger + (fishInventory * 25), 100)
-            fishInventory = 0
-            pd.timer.performAfterDelay(5000, function()
-                poopSound:play()
-                local p = gfx.sprite.new(poopImage)
-                p:moveTo(catSprite:getPosition())
-                p:add()
-            end)
-        end
-    end
-end
-
--- ---------------------------------------------------------
--- INITIALIZE & MAIN LOOP
--- ---------------------------------------------------------
-startSurpriseTimer()
+-- Player sprite (example)
+local playerSprite = gfx.sprite.new(gfx.image.new(32,32)) -- replace with your cat image
+playerSprite:setCollideRect(0, 0, 32, 32)
+playerSprite:moveTo(200, 120)
+playerSprite:add()
 
 function pd.update()
-    local isMoving = false
-    local isSprinting = pd.buttonIsPressed(pd.kButtonB)
-    local currentMoveSpeed = isSprinting and sprintSpeed or normalSpeed
-    
-    if not isGameOver then
-        if pd.buttonIsPressed(pd.kButtonUp) then catSprite:moveBy(0, -currentMoveSpeed); isMoving = true end
-        if pd.buttonIsPressed(pd.kButtonDown) then catSprite:moveBy(0, currentMoveSpeed); isMoving = true end
-        if pd.buttonIsPressed(pd.kButtonLeft) then 
-            catSprite:moveBy(-currentMoveSpeed, 0); isMoving = true; catSprite:setImageFlip(gfx.kImageFlippedX) 
-        end
-        if pd.buttonIsPressed(pd.kButtonRight) then 
-            catSprite:moveBy(currentMoveSpeed, 0); isMoving = true; catSprite:setImageFlip(gfx.kImageUnflipped) 
-        end
-
-        if isMoving then
-            catAnimation.delay = isSprinting and 50 or 100
-            catSprite:setImage(catAnimation:image())
-        else
-            catSprite:setImage(catTable:getImage(1))
-        end
-
-        updateDayNight()
-        updateInteractions(isSprinting and isMoving)
-    end
-
-    if hunger <= 0 then isGameOver = true end
-
     gfx.sprite.update()
-    pd.timer.updateTimers()
-    drawOverlay()
-    
-    -- UI
-    gfx.drawText("Hunger: " .. math.floor(hunger), 10, 10)
-    if isPurring then 
-        gfx.drawText("PURRING... RESTORING", 120, 210) 
-    elseif isSprinting and isMoving then 
-        gfx.drawText("SPRINTING!", 140, 210) 
+
+    -- Example: update day/night cycle (replace with your real logic)
+    dayNightCycle = (dayNightCycle + 0.0005) % 1
+
+    -- === AMBIENCE SWITCHING ===
+    local isNight = (dayNightCycle > 0.6)
+
+    if isNight then
+        if dayAmbience then dayAmbience:stop() end
+        if nightAmbience and not nightAmbience:isPlaying() then
+            nightAmbience:play(0)
+        end
+    else
+        if nightAmbience then nightAmbience:stop() end
+        if dayAmbience and not dayAmbience:isPlaying() then
+            dayAmbience:play(0)
+        end
     end
+
+    -- === STORM LOGIC ===
+    if not isStorming and pd.getElapsedTime() - lastThunderTime > 30 then
+        if math.random() < stormChance then
+            isStorming = true
+            if rainLoop then rainLoop:play(0) end
+            print("Storm starting!")
+        end
+    end
+
+    if isStorming then
+        -- Random thunder rolls
+        if pd.getElapsedTime() - lastThunderTime > math.random(8, 20) then
+            if thunderSfx then thunderSfx:play(1) end
+            lastThunderTime = pd.getElapsedTime()
+        end
+
+        -- End storm after ~60 seconds
+        if pd.getElapsedTime() - lastThunderTime > 60 then
+            isStorming = false
+            if rainLoop then rainLoop:stop() end
+            print("Storm cleared")
+        end
+
+        -- Rain makes sprint cost more hunger
+        if pd.buttonIsPressed(pd.kButtonB) then
+            hunger = hunger + 0.1  -- slippery & tiring
+        end
+    end
+
+    -- === PURR LOOP ===
+    if isOnBed then
+        if pd.getCrankChange() ~= 0 then
+            if purrLoop and not purrLoop:isPlaying() then
+                purrLoop:play(0)
+            end
+        else
+            if purrLoop then purrLoop:stop() end
+        end
+    else
+        if purrLoop then purrLoop:stop() end
+    end
+
+    -- === DOORBELL SURPRISE ===
+    if treatJustSpawned then
+        if doorbellSfx then doorbellSfx:play(1) end
+        treatJustSpawned = false
+    end
+
+    -- === YOUR EXISTING GAME LOGIC HERE ===
+    -- hunger drain, movement, hunting, eating, etc.
+    -- hunger = hunger + 0.01  -- example slow drain
+
+    -- Simple HUD example
+    gfx.drawText("Hunger: " .. math.floor(hunger), 10, 10)
+    gfx.drawText("Storm: " .. (isStorming and "YES" or "no"), 10, 30)
 end
